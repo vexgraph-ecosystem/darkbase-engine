@@ -10,7 +10,7 @@
 
 ## 1. Repo-Local Law Index (Binding Matrix)
 
-Universal laws are inherited from the canonical `../../gist/PREFERENCES.md` Index; this table indexes the additional laws specific to this repository.
+Universal laws inherit from the canonical `../../gist/PREFERENCES.md` Index; the rows below are repo-specific additions.
 
 | Law Title | Scope | Enforcement |
 | :--- | :--- | :--- |
@@ -26,248 +26,41 @@ Universal laws are inherited from the canonical `../../gist/PREFERENCES.md` Inde
 ## 2. Exclusive Repo-Local Laws (FULL PROSE RESTATEMENT)
 
 ### Entity Model Law
-
-#### Definition:
-darkbase defines no schema types of its own; it consumes R2 reflection. A
-`struct` is a `Struct` (a table: an ordered `Field` list, whose `size` is the
-entity row stride), a `class` is a `Class` (a `Struct` plus a constructor and
-`Method`s), a `field` is a `Field`, and a `function` is a `Method`. `Field`
-carries both behavior (name + read/set + target) and physical layout (typeId,
-offset, size, flags), so one record serves live reflection, persistence and
-export. Plain values are named typed bindings in the same scope.
-
-#### The Why:
-A schema expressed as C types needs no DDL text and cannot drift from the struct
-it describes. One shared vocabulary lets rows, callable behavior, and plain
-values live in one findable namespace and be read the same way by reflection,
-the store, scripts, debuggers and the UI. It is the Relational Engine's "name to
-value" thesis carried through to persistence.
-
-#### The Rule:
-1. **Reflection IS the schema.** Structs are entities, Fields are entity fields, Methods are functions. No parallel ad-hoc schema language, and no darkbase-owned descriptor duplicating `Field`.
-2. **Field owns the physical layout.** Persistence and export read offset, size and typeId from the `Field` (or the `Struct`'s row size), never from a hand-maintained table. Vexspoke's reflection `Field` is the single source of truth; a need for more reads it there first.
-3. **One binding namespace.** Structs, Methods, and plain values resolve through the same scope and naming grammar.
-
----
+**Definition.** darkbase defines no schema types; it consumes R2 reflection: `struct` = `Struct` (a table: ordered `Field` list, `size` = entity row stride), `class` = `Class` (`Struct` plus constructor and `Method`s), `field` = `Field`, `function` = `Method`; `Field` carries behavior (name + read/set + target) and physical layout (typeId, offset, size, flags); plain values are named typed bindings in the same scope — one shared C-types-as-schema vocabulary serving reflection, persistence and export without drift. **Rule.** 1. **Reflection IS the schema** — no ad-hoc schema language, no darkbase-owned descriptor duplicating `Field`. 2. **Field owns the physical layout** — persistence/export read offset, size, typeId from the `Field` (or `Struct` row size), never a hand-maintained table; Vexspoke's reflection `Field` is the single source of truth. 3. **One binding namespace** — Structs, Methods and plain values resolve through the same scope and naming grammar.
 
 ### Row Borrow and Owned Copy Law
-
-#### Definition:
-`Database_insert` stores a borrowed row pointer; the caller keeps that row and
-its schema alive for the Database lifetime. `Database_insertOwned` copies one
-exact `Struct.size` byte row into engine-owned memory. A given entity has one
-row ownership mode and never mixes borrowed and owned pointers. Loaded rows use
-the owned mode and are released with the Database.
-
-#### The Why:
-The original pointer-binding contract remains useful for live, caller-owned
-records, while service startup and accepted writes need a row lifetime owned by
-the store. Making the distinction explicit preserves the zero-copy borrowed
-path without confusing a copied row's lifetime or its release owner.
-
-#### The Rule:
-1. Reject a copy-in whose byte length is not exactly the registered schema
-   stride; rejection leaves count and ownership mode unchanged.
-2. Reject mixing modes on one entity. Owned insertion copies bytes and never
-   retains the caller's address.
-3. Free each owned row exactly once with its Database; never free borrowed
-   rows. Schemas remain borrowed and outlive the Database.
-4. Snapshot compatibility loading validates the full input and stages all
-   owned rows before publishing any entity. This all-or-nothing guarantee is
-   limited to that legacy loader; it does not turn the M2 flat dump into the
-   specified persistence design, which is pages plus WAL.
-
----
+**Definition.** `Database_insert` stores a borrowed row pointer; the caller keeps row and schema alive for the Database lifetime. `Database_insertOwned` copies one exact `Struct.size` byte row into engine-owned memory. One ownership mode per entity — borrowed and owned never mix; loaded rows use owned mode, released with the Database — the zero-copy path with a clear release owner. **Rule.** 1. Reject a copy-in whose byte length is not exactly the registered schema stride; count and ownership mode unchanged. 2. Reject mode mixing on one entity; owned insertion copies bytes, never retains the caller's address. 3. Free each owned row exactly once with its Database; never free borrowed rows; schemas stay borrowed, outlive the Database. 4. Snapshot compatibility loading validates the full input and stages all owned rows before publishing any entity — all-or-nothing, limited to that legacy loader; the M2 flat dump is not the specified persistence design (pages plus WAL).
 
 ### Reactive Program Law
-
-#### Definition:
-darkbase has a reactive layer — the SQL analog of triggers, views, and stored
-procedures — as first-class named programs bound to store events
-(`beforeInsert`, `afterInsert`, `beforeUpdate`, `afterDelete`, `onOpen`,
-`onCommit`, `onRollback`).
-
-#### The Why:
-Persistence hooks (validation, indexing, derived views, audit, cache
-invalidation) belong to the store, not scattered across every caller. Making
-them named programs keeps behavior with the data and exportable with it.
-
-#### The Rule:
-1. **Programs fire on the cold admission path only.** Never per element on a hot read (Cold-Strict, Hot-Minimal Validation Law; Cold-Only Reflection Law).
-2. **Programs are data plus behavior.** They export as a descriptor; their code rebinds by name on load, never by a stored address.
-3. **Views are derived Structs.** A view's rows are computed by a program against the authoritative store, not a second synchronized copy.
-
----
+**Definition.** The reactive layer is the SQL analog of triggers, views and stored procedures — first-class named programs bound to store events (`beforeInsert`, `afterInsert`, `beforeUpdate`, `afterDelete`, `onOpen`, `onCommit`, `onRollback`); persistence hooks ship with the data and export with it. **Rule.** 1. **Programs fire on the cold admission path only**, never per element on a hot read (Cold-Strict, Hot-Minimal Validation Law; Cold-Only Reflection Law). 2. **Programs are data plus behavior** — exported as a descriptor; code rebinds by name on load, never by a stored address. 3. **Views are derived Structs** — rows computed by a program against the authoritative store, not a second synchronized copy.
 
 ### Store Versus Executable Separation Law
-
-#### Definition:
-The R3 repository is the `Database` interface and native vex store (future name
-`darkbase-db`). The R5 executable is `darkbase`, an interactive host that opens a
-`.vexdb` and works with it.
-
-#### The Why:
-The store must remain a resident library that any host borrows; the workbench is
-an application with its own lifecycle. Conflating them couples the store to a
-UI and blocks other consumers.
-
-#### The Rule:
-1. **The store never includes R5.** Hosts borrow an opaque `Database*` plus callbacks (Vertical Integration Law).
-2. **The executable is a separate application** over the store, owning no store internals.
-3. **Naming is deliberate:** store = `darkbase-db` (future), executable = `darkbase`.
-
----
+**Definition.** The R3 repository is the `Database` interface and native vex store (future name `darkbase-db`); the R5 executable `darkbase` is an interactive host that opens a `.vexdb`. Conflating them couples the store to a UI and blocks other consumers. **Rule.** 1. **The store never includes R5** — hosts borrow an opaque `Database*` plus callbacks (Vertical Integration Law). 2. **The executable is a separate application** owning no store internals. 3. **Naming is deliberate:** store = `darkbase-db` (future), executable = `darkbase`.
 
 ### Byte-Native Persistence Law
-
-#### Definition:
-Values in darkbase are raw byte spans (`uint8_t[]`). A value is written in
-memory order and read back the same way, with **no byte-order machinery**: no
-endianness detection, no byte swapping, no text encoding. `toString` is a cold
-converter for humans only, never a storage format. The canonical variable is
-`{ uint8_t name[24], void* pointer }` — name bytes plus a pointer to the value
-bytes (the engine's `VariableSlot` already carries this shape).
-
-#### The Why:
-Every supported host is little-endian (the Apple Silicon arm64 floor; Windows
-x86_64), so there is no cross-endian peer to serve. Byte-in-order is more native
-than a swap layer and needs no complication; converting numbers to strings for
-storage would add encoding that the schema already provides. A `void*` value
-pointer is the same "everything is a pointer" model the relational engine uses.
-
-#### The Rule:
-1. **Bytes, not text, for storage.** Durable values are `uint8_t[]` spans; the schema (`Field.typeId` + offset/size) interprets them. No string encoding in a file.
-2. **No endianness code.** Write and read bytes in memory order (native, little-endian floor). No swap helpers, no byte-order fields. A `// INTENTIONAL(vex)` note states this at the format definition.
-3. **`toString` is a cold converter.** String projections exist for debugging only (the toString Law) and are never the persisted form.
-4. **Pointer-free rows.** Persisted row bytes carry no raw pointers; references and functions are rebound by name/index on load.
-5. **Canonical variable.** `{ uint8_t name[24], void* pointer }`; names are 24-byte byte spans, the value is a pointer to its bytes.
-
----
+**Definition.** Values are raw byte spans (`uint8_t[]`), written in memory order and read back the same with **no byte-order machinery** — no endianness detection, byte swapping or text encoding; `toString` is a cold converter for humans, never storage. All supported hosts are little-endian (Apple Silicon arm64 floor; Windows x86_64), so memory order beats a swap layer. **Rule.** 1. **Bytes, not text, for storage** — the schema (`Field.typeId` + offset/size) interprets durable spans; no string encoding in a file. 2. **No endianness code** — no swap helpers or byte-order fields; a `// INTENTIONAL(vex)` note states this at the format definition. 3. **`toString` is a cold converter** — debugging only (the toString Law). 4. **Pointer-free rows** — persisted row bytes carry no raw pointers; references and functions rebind by name/index on load. 5. **Canonical variable** — `{ uint8_t name[24], void* pointer }` (the engine's `VariableSlot` shape): names 24 bytes, the `void*` value a pointer to its bytes.
 
 ### Zero-Alloc Relational Table Scan Law
-
-#### Definition:
-Table scans, range queries, and projection operations in `darkbase` operate directly across memory-mapped relational row slices using strided record offsets with zero heap allocation during query execution.
-
-#### The Why:
-Database query engines that allocate row objects during iteration thrash caches and bottleneck on the memory allocator. Strided memory-mapped scanning enables near-memory-bus throughput.
-
-#### The Rule:
-1. **Strided Projections:** Query iterators yield pointers to existing record spans.
-2. **Zero Row Allocs:** Never allocate temporary row wrappers in scan loops.
-
----
+**Definition.** Table scans, range queries and projections run directly across memory-mapped relational row slices via strided record offsets — zero heap allocation during query execution; strided memory-mapped scanning reaches near-memory-bus throughput. **Rule.** 1. **Strided Projections** — query iterators yield pointers to existing record spans. 2. **Zero Row Allocs** — never allocate temporary row wrappers in scan loops.
 
 ### B-Tree Page Consistency Law
-
-#### Definition:
-B-tree node splits, leaf balance operations, and index updates execute strictly within fixed-size page blocks allocated from dedicated database memory pools.
-
-#### The Why:
-Predictable index geometry guarantees bounded traversal depth and prevents fragmentation across database storage files.
-
-#### The Rule:
-1. **Page Bounded:** B-tree pages are fixed-size power-of-two blocks.
-2. **Atomic Splits:** Page balance updates commit transactionally before updating parent pointers.
-
----
+**Definition.** B-tree splits, leaf balance and index updates run strictly within fixed-size page blocks from dedicated database memory pools — predictable index geometry bounds traversal depth and prevents fragmentation. **Rule.** 1. **Page Bounded** — fixed-size power-of-two blocks. 2. **Atomic Splits** — page balance updates commit transactionally before updating parent pointers.
 
 ## 3. Repo-Local Extensions (managed, per the Conflict Triage Law)
 
 ### Durable Page Store Boundary Law
 
-`store/store.{h,c}` owns a page-level durable owner over R2's real Rust growable
-mapping, Page and Wal. One physical file holds an immutable bootstrap page, a
-caller-sized embedded redo region and data pages. No sidecar or C mapping clone
-is introduced. Full detached sealed page images enter redo; its commit marker
-is synced before mapped data changes. Data sync precedes success. Reopen admits
-only after replay and free-chain validation; no checkpoint baseline other than
-zero is supported. Uncertain IO blocks further admission until close/reopen,
-and a failed call may be recovered as committed.
+`store/store.{h,c}` owns a page-level durable owner over R2's real Rust growable mapping, Page and Wal. One physical file: immutable bootstrap page, caller-sized embedded redo region, data pages — no sidecar or C mapping clone. Full detached sealed page images enter redo; the commit marker syncs before mapped data changes, and data sync precedes success. Reopen admits only after replay and free-chain validation; no checkpoint baseline other than zero. Uncertain IO blocks admission until close/reopen; a failed call may be recovered as committed. Separate primitive: not a durable `Database`/Headless integration, schema/catalog or ordered row index. Release/reuse on logical page ids; no stale row-handle generation promise. Embedded history retained: journal recycling/checkpoint compaction unimplemented; writes refuse/count when its explicit capacity or the data reservation is exhausted; `Store_sync` never truncates or retires this history.
 
-This is a separate primitive, not a durable `Database`/Headless integration,
-schema/catalog or ordered row index. Release/reuse operates on logical page ids;
-there is no stale row-handle generation promise. Embedded history is retained:
-safe journal recycling/checkpoint compaction remains unimplemented, and writes
-refuse/count when its explicit capacity or the data reservation is exhausted.
-`Store_sync` never truncates or retires this embedded history.
+**Bridge** (`Database_saveStore`/`Database_loadStore`): dedicated reflected catalog encoding + raw owned-row spans split into page chains, published through one catalog root-page replacement — not the legacy M2 snapshot parser. Loading requires the same schemas registered first and stages all owned rows before publication. Whole-image persistence, not incremental row addressing or a multi-page transaction. Old catalog/data pages and redo records are retained; capacity refusal before root publication preserves the previously selected image; uncertain root commit requires close/reopen. No checkpointing, schema migration, structured indexes, or thread-safe Store operations.
 
-`Database_saveStore`/`Database_loadStore` provide the initial Database bridge:
-a dedicated reflected catalog encoding and raw owned-row spans are split into
-page chains and published through one catalog root-page replacement; they do not
-route through the legacy M2 snapshot parser. Loading requires the same schemas
-registered first and stages all owned rows before publication. This is
-whole-image persistence, not incremental row addressing or a multi-page
-transaction. Old catalog/data pages and redo records are retained; capacity refusal
-before root publication preserves the previously selected image, while uncertain
-root commit requires close/reopen. This bridge does not provide checkpointing,
-schema migration, structured indexes, or make Store operations thread-safe.
-
-`Database_queryEqual` is the first structured query operation. It resolves one
-reflected Field cold, validates its nonzero span against the entity row stride,
-and compares exact bytes across the in-memory rows. It returns a cursor owning
-only its temporary row-pointer list; matching row values remain borrowed and the
-cursor must be freed before Database. It is not numeric comparison, projection,
-ordering, persistent catalog lookup, or an index. Database and
-query results remain caller-serialized/owner-affine.
-
-`Database_queryInt32Range` interprets one exact-width field span as native
-`int32_t` and returns rows within inclusive signed bounds. It performs no type
-coercion; callers must use it only where the field's row bytes carry that
-representation. Reversed bounds and invalid spans reject loudly without changing
-Database state. It uses the entity's declared int32 index when one covers the
-field and scans the row list otherwise, returning the same matches either way.
-
-`Database_indexBuild` declares and builds the in-memory int32 index for one
-field, and admits only a Field carrying `REFLECT_FIELD_INDEXED` whose span is
-exactly `int32_t` — the schema's flag stays the single declaration point. The
-records are a key-sorted array of borrowed row pointers. Rows are append-only,
-so an insert only marks the records stale and the next query rebuilds them,
-which keeps admission allocation-free and free of partial state. While an index
-exists, the indexed field of a bound row must not be mutated in place; the
-Database does not detect that.
-
-`Database_saveStore` persists each declared index as `{int32_t key; uint32_t
-rowIndex}` records placed after the entity's row span, inside the same catalog
-payload and therefore under the same single root-page publication: rows and index
-cannot tear apart. `Database_loadStore` re-validates every record before
-publishing anything — key ordering, `rowIndex` range, and each key against the
-bytes of the row it names — and refuses the whole image when the registered
-schema no longer declares that exact indexed span. Addresses are never persisted;
-the records are re-pointed at the loaded rows. An entity whose image carries no
-index keeps its local declaration and rebuilds on the next query. This is still a
-whole-image rewrite, not incremental index pages: no page-level index, no ordered
-scan of other field types, and no multi-field index.
-
-`Database_fieldSpan` resolves one field NAME to its in-row byte span
-(`{code, offset, size}`), so a consumer that has no C struct — a headless
-service, a tool, any schema-driven reader — can read a field without walking the
-reflection tree and folding names itself. The name is folded, so case is
-irrelevant; a null, unknown or ambiguous name rejects explicitly, and a declared
-span that would leave the row is refused rather than handed to a reader. It is
-read-only: it allocates nothing and disturbs no index. This is named-field
-resolution, not projection: no field list, no computed values, no row shaping.
-catalog index after validating the root, page chain, checksum and record spans.
-The value contains name, row stride and row count and does not borrow Store
-memory. It supports discovery only; loading data still requires the caller to
-register matching reflected schemas.
-
-The caller owns one serialization/exclusion domain, stable trusted paths and
-all external alias/truncation exclusion. No OS lock or hostile-writer sandbox
-is inferred. Geometry, owned pointers, page count, free head, sequence and
-failure state mutate only through construction, admission and durable operations;
-validated getters, not lifetime-forging setters, expose them. This is a scoped
-managed accessor exception under the Conflict Triage Law and Single Class Per
-File Law (Java Law). A non-reentrant observation callback may observe commit
-boundaries but production correctness never depends on it. Initial creation is
-not a crash-atomic publication and may retain a rejected artifact for recovery.
-
-Registered independent proof is `tests/darkbase-engine/store/run.py` (workspace
-root command), including mirrored Store/Page/Wal owners with fresh native C
-dependencies, real Rust archive, optimized assertions and C ASan/UBSan. Actual
-power loss, Rust sanitizer instrumentation, allocator failure, full OS-error and
-other-platform/runtime-floor proof remain explicit gaps. The global graph's
-post-migration ownership-ratchet failure is separate and not silently bypassed.
+- `Database_queryEqual` — first structured query: resolve one reflected Field cold, validate its nonzero span against the entity row stride, compare exact bytes across in-memory rows. Cursor owns only its temporary row-pointer list; matching row values remain borrowed, cursor freed before Database. Not numeric comparison, projection, ordering, persistent catalog lookup, or an index; results remain caller-serialized/owner-affine.
+- `Database_queryInt32Range` — interpret one exact-width field span as native `int32_t`, rows within inclusive signed bounds; no type coercion — use only where the field's row bytes carry that representation. Reversed bounds and invalid spans reject loudly, Database state unchanged. Uses the declared int32 index when one covers the field, row-list scan otherwise — same matches either way.
+- `Database_indexBuild` — in-memory int32 index for one field; admits only a Field carrying `REFLECT_FIELD_INDEXED` whose span is exactly `int32_t` (the schema's flag is the single declaration point). Records: a key-sorted array of borrowed row pointers; rows are append-only, so an insert only marks the records stale and the next query rebuilds them — admission stays allocation-free, free of partial state. While an index exists, the indexed field of a bound row must not be mutated in place; the Database does not detect that.
+- `Database_saveStore` persists each declared index as `{int32_t key; uint32_t rowIndex}` records after the entity's row span, inside the same catalog payload and so the same single root-page publication: rows and index cannot tear apart. `Database_loadStore` re-validates every record before publishing — key ordering, `rowIndex` range, each key against the bytes of the row it names — and refuses the whole image when the registered schema no longer declares that exact indexed span. Addresses are never persisted; records re-point at the loaded rows. An entity whose image carries no index keeps its local declaration and rebuilds on the next query. Still a whole-image rewrite, not incremental index pages: no page-level index, no ordered scan of other field types, no multi-field index.
+- `Database_fieldSpan` resolves one field NAME to its in-row byte span (`{code, offset, size}`), letting a consumer without a C struct — headless service, tool, schema-driven reader — read a field without walking the reflection tree and folding names itself. Name folded (case irrelevant); null, unknown or ambiguous names reject explicitly, and a declared span that would leave the row is refused rather than handed to a reader. Read-only: allocates nothing, disturbs no index. Named-field resolution, not projection: no field list, no computed values, no row shaping. catalog index after validating the root, page chain, checksum and record spans. The value contains name, row stride and row count, borrowing no Store memory. Discovery only; loading data still requires the caller to register matching reflected schemas.
+- **Caller contract:** one serialization/exclusion domain, stable trusted paths and all external alias/truncation exclusion are caller-owned; no OS lock or hostile-writer sandbox inferred. Geometry, owned pointers, page count, free head, sequence and failure state mutate only through construction, admission and durable operations; validated getters, not lifetime-forging setters, expose them — a scoped managed accessor exception under the Conflict Triage Law and Single Class Per File Law (Java Law). A non-reentrant observation callback may observe commit boundaries, but production correctness never depends on it. Initial creation is not crash-atomic and may retain a rejected artifact for recovery.
+- **Proof:** `tests/darkbase-engine/store/run.py` (workspace root command) — mirrored Store/Page/Wal owners, fresh native C dependencies, real Rust archive, optimized assertions, C ASan/UBSan. Power loss, Rust sanitizer instrumentation, allocator failure, full OS-error and other-platform/runtime-floor proof remain explicit gaps. The global graph's post-migration ownership-ratchet failure is separate and not silently bypassed.
 
 ;;INTENTION("R3 Database Driver: native vex entity store over the shared reflection vocabulary (Struct=entity, Field=entity field with physical layout, Method=function) with reactive store-event programs; zero-alloc table scans; strict page consistency; structured native query, not a SQL engine.")
 
