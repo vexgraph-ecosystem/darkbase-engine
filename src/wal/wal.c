@@ -1,8 +1,9 @@
 #include "wal/wal.h"
+#include "platform/platform.h"
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
-#if defined(_WIN32)
+#if defined(VEX_PLATFORM_WINDOWS)
 #include <io.h>
 #else
 #include <unistd.h>
@@ -179,7 +180,7 @@ static bool syncFile(Wal *self) {
     File *file = (File*) (*self).file;
     if (!File_flush(file))
         return false;
-#if defined(_WIN32)
+#if defined(VEX_PLATFORM_WINDOWS)
     return _commit(_fileno(File_handle(file))) == 0;
 #else
     return fsync(fileno(File_handle(file))) == 0;
@@ -701,7 +702,7 @@ WalCode Wal_checkpoint(Wal *self) {
         return WAL_IO;
     }
     File *file = (File*) (*self).file;
-#if defined(_WIN32)
+#if defined(VEX_PLATFORM_WINDOWS)
     if (_chsize_s(_fileno(File_handle(file)), (long long) WAL_HEADER_BYTES) != 0) {
 #else
     if (ftruncate(fileno(File_handle(file)), (off_t) WAL_HEADER_BYTES) != 0) {
